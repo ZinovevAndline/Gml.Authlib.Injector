@@ -28,14 +28,7 @@ public class AndlineEncryptedHandshakeTransformUnitTest {
         writer.visit(V1_8, ACC_PUBLIC, HANDLER.replace('.', '/'), null, "java/lang/Object", null);
         MethodVisitor mv = writer.visitMethod(ACC_PUBLIC, "handle", METHOD, null, null);
         mv.visitCode();
-        mv.visitTypeInsn(NEW, "java/math/BigInteger");
-        mv.visitInsn(DUP);
-        mv.visitInsn(ICONST_1);
-        mv.visitMethodInsn(INVOKESTATIC, "java/math/BigInteger", "valueOf", "(J)Ljava/math/BigInteger;", false);
-        // Deliberate minimal bytecode: discard malformed temporary stack and
-        // supply an actual BigInteger receiver using valueOf(1L).
-        mv.visitInsn(POP);
-        mv.visitInsn(POP);
+        // Valid JVM operand stack: BigInteger receiver, then radix int.
         mv.visitInsn(LCONST_1);
         mv.visitMethodInsn(INVOKESTATIC, "java/math/BigInteger", "valueOf", "(J)Ljava/math/BigInteger;", false);
         mv.visitIntInsn(BIPUSH, 16);
