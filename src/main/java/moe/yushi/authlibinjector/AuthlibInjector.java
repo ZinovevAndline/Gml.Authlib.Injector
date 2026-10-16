@@ -42,6 +42,9 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
+import moe.yushi.authlibinjector.andline.AndlineEncryptedHandshakeTransformUnit;
+import moe.yushi.authlibinjector.andline.AndlineHasJoinedFilter;
+import moe.yushi.authlibinjector.andline.AndlineProviderSessions;
 import moe.yushi.authlibinjector.httpd.AntiFeaturesFilter;
 import moe.yushi.authlibinjector.httpd.DefaultURLRedirector;
 import moe.yushi.authlibinjector.httpd.LegacySkinAPIFilter;
@@ -224,12 +227,23 @@ public final class AuthlibInjector {
 	}
 
 	private static List<URLFilter> createFilters(APIMetadata config) {
+		boolean andlineRouting = Boolean.parseBoolean(System.getProperty("andline.providerRouting", "false"));
+		if (andlineRouting && Config.httpdDisabled) {
+			throw new IllegalStateException("ANDLINE routing requires a loopback HTTP filter");
+		}
 		if (Config.httpdDisabled) {
 			log(INFO, "Disabled local HTTP server");
 			return emptyList();
 		}
 
 		List<URLFilter> filters = new ArrayList<>();
+		if (andlineRouting) {
+			// Without a route registered by the encrypted Bungee handshake
+			// every hasJoined request fails closed. Default GML is unchanged.
+			filters.add(new AndlineHasJoinedFilter(config.getApiRoot(),
+					AndlineProviderSessions.registry()));
+			log(INFO, "ANDLINE provider-based hasJoined verification enabled");
+		}
 
 		YggdrasilClient customClient = new YggdrasilClient(new CustomYggdrasilAPIProvider(config));
 		YggdrasilClient mojangClient = new YggdrasilClient(new MojangYggdrasilAPIProvider(), Config.mojangProxy);
@@ -282,6 +296,11 @@ public final class AuthlibInjector {
 		transformer.units.add(new ConstantURLTransformUnit(urlProcessor));
 		transformer.units.add(new CitizensTransformer());
 		transformer.units.add(new ConcatenateURLTransformUnit());
+		if (Boolean.parseBoolean(System.getProperty("andline.providerRouting", "false"))) {
+			// Exact Bungee EncryptionResponse → SHA-1 hash, not a PreLogin
+			// guess based on nickname or the client-supplied virtual host.
+			transformer.units.add(new AndlineEncryptedHandshakeTransformUnit());
+		}
 
 		boolean usernameCheckDefault = Boolean.TRUE.equals(config.getMeta().get("feature.username_check"));
 		if (Config.usernameCheck.isEnabled(usernameCheckDefault)) {
@@ -298,7 +317,11 @@ public final class AuthlibInjector {
 		transformer.units.add(new YggdrasilKeyTransformUnit());
 		config.getDecodedPublickey().ifPresent(YggdrasilKeyTransformUnit.PUBLIC_KEYS::add);
 		transformer.units.add(new VelocityProfileKeyTransformUnit());
-		transformer.units.add(new BungeeCordProfileKeyTransformUnit());
+		if (!Boolean.parseBoolean(System.getProperty("andline.providerRouting", "false"))) {
+			// Legacy GML compatibility only: do not bypass Bungee profile-key
+			// validation globally while official Mojang sessions are enabled.
+			transformer.units.add(new BungeeCordProfileKeyTransformUnit());
+		}
 		MainArgumentsTransformer.getArgumentsListeners().add(new AccountTypeTransformer()::transform);
 
 		return transformer;
