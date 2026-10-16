@@ -14,6 +14,8 @@ public final class AndlineProviderSessions {
         return ROUTES.cancel(hash, name, connectionId);
     }
 
+    public static AndlineSessionRouteRegistry registry() { return ROUTES; }
+
     public static java.util.Optional<AndlineSessionRouteRegistry.Route> consume(String hash, String name) {
         return ROUTES.consume(hash, name);
     }
