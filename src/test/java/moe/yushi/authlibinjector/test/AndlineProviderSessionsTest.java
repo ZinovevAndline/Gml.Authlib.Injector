@@ -58,4 +58,18 @@ public class AndlineProviderSessionsTest {
         assertEquals(Provider.GML, AndlineProviderSessions.consume(hash, "Steve").get().provider());
         assertFalse(AndlineProviderSessions.consume(hash, "Steve").isPresent());
     }
+    @Test
+    public void cannotFlipPinnedGmlToMojangBeforeEncryption() {
+        FakePendingConnection conn = new FakePendingConnection("Steve");
+        UUID owner = UUID.randomUUID();
+        AndlineProviderSessions.markConnection(conn, Provider.GML, owner);
+        assertThrows(IllegalStateException.class,
+                () -> AndlineProviderSessions.markConnection(conn, Provider.MOJANG, owner));
+        assertThrows(IllegalStateException.class,
+                () -> AndlineProviderSessions.markConnection(conn, Provider.GML, UUID.randomUUID()));
+        String hash = "a03f19";
+        AndlineProviderSessions.registerEncryptedHash(conn, hash);
+        assertEquals(Provider.GML, AndlineProviderSessions.consume(hash, "Steve").get().provider());
+    }
+
 }
