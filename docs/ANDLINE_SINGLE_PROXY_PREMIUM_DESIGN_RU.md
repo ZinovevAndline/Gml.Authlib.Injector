@@ -1,8 +1,11 @@
 # ANDLINE: Premium на одном Bungee/NullCordX и GML Authlib
 
-> Дизайн для интеграции. Этот PR добавляет только изолированный проверяемый
-> реестр маршрутов, НЕ подключает его к действующему преобразованию URL,
-> НЕ разрешает Premium-вход и НЕ изменяет поведение модовых серверов.
+> Дизайн и экспериментальная реализация Java Agent. В PR добавлены
+> изолированный реестр маршрутов, опциональный локальный перехват
+> `hasJoined` и ASM-хук `InitialHandler.handle(EncryptionResponse)`.
+> Доверенная передача выбранного провайдера из TiAuth, привязка в Laravel
+> и полноценный Premium-вход **ещё не подключены**. На прод не включать.
+> Поведение существующего GML без новой опции не меняется.
 
 ## Требования пользователя
 
@@ -107,14 +110,56 @@ OFFLINE_ALLOWED
 - Автоматический возврат на пароль после неуспешной/недоступной
   онлайн-верификации уже премиум-привязанной учётной записи.
 
+## Реализовано в этом PR
+
+- `AndlineSessionRouteRegistry` — одноразовое связывание
+  серверного SHA-1-хеша и имени с точным провайдером, TTL и owner.
+- `AndlineEncryptedHandshakeTransformUnit` — экспериментальный ASM-хук
+  `net.md_5.bungee.connection.InitialHandler.handle(EncryptionResponse)`;
+  берет результат `BigInteger.toString(16)` **после encryption**,
+  не изменяя исходный SHA-1-хеш.
+- `AndlineProviderSessions.markConnection(...)` — будущий метод
+  доверенного TiAuth, который ДО шифрования выбирает провайдера именно для
+  объекта `PendingConnection`; без вызова никакого маршрута не появляется.
+- `AndlineHasJoinedFilter` — локальный фильтр только для
+  `sessionserver.mojang.com/session/minecraft/hasJoined`.
+  Атомарно потребляет маршрут; по нему вызывает официальный Mojang
+  или фиксированный HTTPS GML root. HTTP redirects отключены;
+  URL из handshake не принимается; лимит тела 64 KiB;
+  ответ проверяется на корректные `id/name`, доступен только
+  при положительном ответе выбранного провайдера.
+- Добавлены JUnit-тесты для маршрутов, локальной привязки к
+  `PendingConnection`, отрицательных ответов и гонок.
+
+## Feature flag
+
+```
+-Dandline.providerRouting=true
+```
+
+**НИ В КОЕМ СЛУЧАЕ пока не добавлять этот JVM-параметр в Pterodactyl.**
+Он служит для будущего интеграционного стенда. Пока TiAuth не вызывает
+`markConnection`, реальные GML/Premium `hasJoined` будут отвергаться —
+это намеренный fail-closed.
+
+Для этой экспериментальной опции запрещена комбинация с
+`-Dauthlibinjector.disableHttpd`. Базовая GML-конфигурация без
+`andline.providerRouting=true` сохраняет исходное поведение.
+
+В смешанном режиме отключён старый Bungee
+`BungeeCordProfileKeyTransformUnit`, глобально подменявший
+`EncryptionUtil.check(PlayerPublicKey, UUID)` на true. Проверки
+публичных ключей и сообщения современных Minecraft-версий требуют
+реального совместимого стендового E2E, прежде чем выпускать такую сборку.
+
 ## Статус этого PR
 
-**FOUNDATION / NOT FOR DEPLOYMENT.** Реестр
-`AndlineSessionRouteRegistry` не подключён к `URLProcessor` и не
-используется в авторизации. Добавлены тесты для single-use, чужого
-connection owner, истечения срока, гонки параллельных подтверждений,
-строгого serverHash+username и запрета смены провайдера посреди входа.
+**DRAFT / NOT FOR DEPLOYMENT.** Код выбора backend уже подключён
+к Agent только под выключенной по умолчанию JVM-опцией. Нужно
+подключить выбор GML/MOJANG по канонической политике Laravel внутри
+TiAuth PreLogin, после `LoginEvent` проверить identity и закончить
+привязку по отдельному одноразовому коду.
 
-Новый endpoint или настройка в `config.yml` пока не требуется.
-Настройки сценария и его audit log — в админке ANDLINE;
+Новый endpoint или секрет в `config.yml` пока не требуется.
+Настройки сценария и audit log будут в админке ANDLINE;
 в окружении только реальные секреты и безопасная конфигурация JVM.
