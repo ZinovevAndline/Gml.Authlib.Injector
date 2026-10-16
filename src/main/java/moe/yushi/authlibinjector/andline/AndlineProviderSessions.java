@@ -45,7 +45,16 @@ public final class AndlineProviderSessions {
         if (pendingConnection == null || provider == null || connectionId == null) {
             throw new IllegalArgumentException("Missing authenticated provider selection");
         }
-        selections.put(pendingConnection, new Selection(provider, connectionId));
+        synchronized (selections) {
+            Selection existing = selections.get(pendingConnection);
+            if (existing != null) {
+                if (existing.provider != provider || !existing.connectionId.equals(connectionId)) {
+                    throw new IllegalStateException("Provider already pinned for this connection");
+                }
+                return;
+            }
+            selections.put(pendingConnection, new Selection(provider, connectionId));
+        }
     }
 
     /** Explicitly drop a connection that cancelled during PreLogin. */
