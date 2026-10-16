@@ -25,6 +25,7 @@ import moe.yushi.authlibinjector.internal.fi.iki.elonen.Response;
 import moe.yushi.authlibinjector.internal.fi.iki.elonen.Status;
 import moe.yushi.authlibinjector.internal.org.json.simple.JSONObject;
 import moe.yushi.authlibinjector.internal.org.json.simple.JSONValue;
+import moe.yushi.authlibinjector.internal.org.json.simple.parser.ParseException;
 
 /**
  * Opt-in server-side hasJoined routing. This filter NEVER detects Premium from a
@@ -103,7 +104,12 @@ public final class AndlineHasJoinedFilter implements URLFilter {
         String body = response.get();
         if (body.length() > MAX_PROFILE_BYTES) return Optional.empty();
 
-        Object parsed = JSONValue.parse(body);
+        Object parsed;
+        try {
+            parsed = JSONValue.parse(body);
+        } catch (ParseException invalidProfile) {
+            return Optional.empty();
+        }
         if (!(parsed instanceof JSONObject)) return Optional.empty();
         JSONObject profile = (JSONObject) parsed;
         Object returnedName = profile.get("name");
