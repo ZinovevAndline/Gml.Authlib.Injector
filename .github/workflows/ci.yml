@@ -72,11 +72,15 @@ jobs:
           candidates=(build/libs/*.jar)
           selected=''
           for candidate in "${candidates[@]}"; do
-            if ! unzip -p "$candidate" META-INF/MANIFEST.MF 2>/dev/null \
-                | grep -q '^Premain-Class: moe.yushi.authlibinjector.Premain'; then
+            # Use the JDK jar tool rather than relying on system unzip packages.
+            jar tf "$candidate" > "$RUNNER_TEMP/authlib-jar-contents.txt"
+            manifest_dir=$(mktemp -d)
+            (cd "$manifest_dir" && jar xf "$GITHUB_WORKSPACE/$candidate" META-INF/MANIFEST.MF)
+            if ! grep -q '^Premain-Class: moe.yushi.authlibinjector.Premain' "$manifest_dir/META-INF/MANIFEST.MF"; then
+              rm -rf "$manifest_dir"
               continue
             fi
-            jar tf "$candidate" > "$RUNNER_TEMP/authlib-jar-contents.txt"
+            rm -rf "$manifest_dir"
             if grep -Fxq 'moe/yushi/authlibinjector/internal/org/objectweb/asm/ClassReader.class' \
                 "$RUNNER_TEMP/authlib-jar-contents.txt"; then
               if [[ -n "$selected" ]]; then
