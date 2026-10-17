@@ -61,11 +61,11 @@ public class AndlineProviderSessionsTest {
     @Test
     public void disconnectAfterEncryptionRevokesTheExactUnconsumedRoute() {
         String hash = "9ba771f0d0";
-        FakePendingConnection conn = new FakePendingConnection("CloseBeforeJoined");
+        FakePendingConnection conn = new FakePendingConnection("CloseBeforeJoin");
         AndlineProviderSessions.markConnection(conn, Provider.MOJANG, UUID.randomUUID());
         AndlineProviderSessions.registerEncryptedHash(conn, hash);
         AndlineProviderSessions.clearConnection(conn);
-        assertFalse(AndlineProviderSessions.consume(hash, "CloseBeforeJoined").isPresent(),
+        assertFalse(AndlineProviderSessions.consume(hash, "CloseBeforeJoin").isPresent(),
                 "A disconnected player must never leave a usable Mojang reservation");
     }
 
