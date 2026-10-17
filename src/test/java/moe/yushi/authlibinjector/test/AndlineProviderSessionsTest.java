@@ -81,7 +81,7 @@ public class AndlineProviderSessionsTest {
         AndlineProviderSessions.clearConnection(first);
         assertFalse(AndlineProviderSessions.consume(hash, "FirstPlayer").isPresent());
         assertEquals(Provider.MOJANG,
-                AndlineProviderSessions.consume(hash, "OtherPlayer").orElseThrow().provider());
+                AndlineProviderSessions.consume(hash, "OtherPlayer").get().provider());
     }
 
     @Test
@@ -95,7 +95,7 @@ public class AndlineProviderSessionsTest {
         AndlineProviderSessions.registerEncryptedHash(conn, "012345abcdef");
         assertFalse(AndlineProviderSessions.consume("012345abcdef", "NoSwitch").isPresent());
         assertEquals(Provider.GML,
-                AndlineProviderSessions.consume(first, "NoSwitch").orElseThrow().provider());
+                AndlineProviderSessions.consume(first, "NoSwitch").get().provider());
         AndlineProviderSessions.clearConnection(conn);
     }
 
