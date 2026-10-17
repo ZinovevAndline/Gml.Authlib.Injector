@@ -1,37 +1,148 @@
-name: Build and test Authlib Injector
+name: Build and release ANDLINE Authlib Injector
 
 on:
   push:
-    branches: [develop]
+    branches: [main, develop]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  build:
+  # Do not run pull requests from untrusted forks on the private Ubuntu runner.
+  pr-build:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
-          fetch-depth: 0
-      - name: Setup JDK 17
-        uses: actions/setup-java@v4
+          persist-credentials: false
+      - name: Java 17
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
-      - name: Test and shadowJar
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Build and test
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon clean test shadowJar
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+
+  build:
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
         with:
-          name: authlib-injector-test-build
-          path: build/libs/*
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Build and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew --no-daemon clean test shadowJar
+
+      - name: Verify and package shaded Java agent
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          shopt -s nullglob
+          candidates=(build/libs/*.jar)
+          selected=''
+          for candidate in "${candidates[@]}"; do
+            if ! unzip -p "$candidate" META-INF/MANIFEST.MF 2>/dev/null \
+                | grep -q '^Premain-Class: moe.yushi.authlibinjector.Premain'; then
+              continue
+            fi
+            jar tf "$candidate" > "$RUNNER_TEMP/authlib-jar-contents.txt"
+            if grep -Fxq 'moe/yushi/authlibinjector/internal/org/objectweb/asm/ClassReader.class' \
+                "$RUNNER_TEMP/authlib-jar-contents.txt"; then
+              if [[ -n "$selected" ]]; then
+                echo "::error::More than one shaded agent JAR was produced."
+                exit 1
+              fi
+              selected="$candidate"
+            fi
+          done
+          if [[ -z "$selected" ]]; then
+            echo "::error::No runnable shaded Authlib Injector JAR with Premain and relocated ASM found."
+            exit 1
+          fi
+          cp "$selected" dist/andline-authlib-injector.jar
+          (cd dist && sha256sum andline-authlib-injector.jar > SHA256SUMS)
+          ls -lh dist/
+          cat dist/SHA256SUMS
+
+      - name: Upload tested JAR and checksum
+        uses: actions/upload-artifact@v7
+        with:
+          name: andline-authlib-injector-${{ github.run_number }}
+          path: dist/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
+
+  release:
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: build
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: andline-authlib-injector-${{ github.run_number }}
+          path: dist
+      - name: Set release tag
+        id: tag
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF_TYPE" == 'tag' ]]; then
+            tag="$REF_NAME"
+          else
+            tag="build-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:8}"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          (cd dist && sha256sum -c SHA256SUMS)
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ANDLINE Authlib Injector — ${{ steps.tag.outputs.tag }}
+          body: |
+            Automatically built from the ANDLINE Authlib Injector source.
+            JUnit tests and Gradle shadowJar passed on the ANDLINE Ubuntu runner.
+            Use andline-authlib-injector.jar as the Java agent.
+            SHA256SUMS verifies the binary.
+          files: |
+            dist/andline-authlib-injector.jar
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
+          generate_release_notes: true
