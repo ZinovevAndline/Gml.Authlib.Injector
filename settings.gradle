@@ -1,1 +1,10 @@
+pluginManagement {
+    repositories {
+        // Gradle Plugin Portal hosts the marker modules, but dependencies of
+        // Shadow and git-version also need standard Maven Central artifacts.
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
 rootProject.name = 'authlib-injector'
