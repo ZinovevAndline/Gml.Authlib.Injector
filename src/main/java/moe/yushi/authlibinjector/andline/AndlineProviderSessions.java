@@ -24,6 +24,23 @@ public final class AndlineProviderSessions {
     private static final Map<Object, Selection> selections =
             Collections.synchronizedMap(new WeakHashMap<>());
 
+    // Protected by selections' monitor together with the pending choices.
+    // Retain only a weak reference to each connection: the route registry
+    // itself has a bounded 30-second expiry.
+    private static final Map<Object, RegisteredRoute> registered = new WeakHashMap<>();
+
+    private static final class RegisteredRoute {
+        final String hash;
+        final String name;
+        final UUID connectionId;
+
+        RegisteredRoute(String hash, String name, UUID connectionId) {
+            this.hash = hash;
+            this.name = name;
+            this.connectionId = connectionId;
+        }
+    }
+
     private static final class Selection {
         final AndlineSessionRouteRegistry.Provider provider;
         final UUID connectionId;
@@ -46,6 +63,9 @@ public final class AndlineProviderSessions {
             throw new IllegalArgumentException("Missing authenticated provider selection");
         }
         synchronized (selections) {
+            if (registered.containsKey(pendingConnection)) {
+                throw new IllegalStateException("Encrypted handshake already registered for this connection");
+            }
             Selection existing = selections.get(pendingConnection);
             if (existing != null) {
                 if (existing.provider != provider || !existing.connectionId.equals(connectionId)) {
@@ -59,7 +79,16 @@ public final class AndlineProviderSessions {
 
     /** Explicitly drop a connection that cancelled during PreLogin. */
     public static void clearConnection(Object pendingConnection) {
-        if (pendingConnection != null) selections.remove(pendingConnection);
+        if (pendingConnection == null) return;
+        synchronized (selections) {
+            selections.remove(pendingConnection);
+            RegisteredRoute route = registered.remove(pendingConnection);
+            if (route != null) {
+                // This route is revoked ONLY if its original connection ID
+                // still owns it; reconnects cannot erase a newer admission.
+                ROUTES.cancel(route.hash, route.name, route.connectionId);
+            }
+        }
     }
 
     /**
@@ -70,16 +99,24 @@ public final class AndlineProviderSessions {
     @CallbackMethod
     public static void registerEncryptedHash(Object pendingConnection, String serverHash) {
         if (pendingConnection == null || serverHash == null) return;
-        Selection selected = selections.remove(pendingConnection);
-        if (selected == null) return; // No verified routing decision.
-        try {
-            Method getName = pendingConnection.getClass().getMethod("getName");
-            Object value = getName.invoke(pendingConnection);
-            if (!(value instanceof String)) return;
-            ROUTES.reserve(serverHash, (String) value,
-                    selected.provider, selected.connectionId, 30_000L);
-        } catch (ReflectiveOperationException | IllegalArgumentException ignored) {
-            // Unsupported proxy build: never silently guess a provider.
+        synchronized (selections) {
+            // Only the first valid encrypted hash may represent a connection.
+            if (registered.containsKey(pendingConnection)) return;
+            Selection selected = selections.remove(pendingConnection);
+            if (selected == null) return; // No verified routing decision.
+            try {
+                Method getName = pendingConnection.getClass().getMethod("getName");
+                Object value = getName.invoke(pendingConnection);
+                if (!(value instanceof String)) return;
+                String name = (String) value;
+                if (ROUTES.reserve(serverHash, name,
+                        selected.provider, selected.connectionId, 30_000L)) {
+                    registered.put(pendingConnection,
+                            new RegisteredRoute(serverHash, name, selected.connectionId));
+                }
+            } catch (ReflectiveOperationException | IllegalArgumentException | SecurityException ignored) {
+                // Unsupported proxy build: never silently guess a provider.
+            }
         }
     }
 
