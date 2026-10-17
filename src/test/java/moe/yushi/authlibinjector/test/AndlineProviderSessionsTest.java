@@ -59,6 +59,47 @@ public class AndlineProviderSessionsTest {
         assertFalse(AndlineProviderSessions.consume(hash, "Steve").isPresent());
     }
     @Test
+    public void disconnectAfterEncryptionRevokesTheExactUnconsumedRoute() {
+        String hash = "9ba771f0d0";
+        FakePendingConnection conn = new FakePendingConnection("CloseBeforeJoined");
+        AndlineProviderSessions.markConnection(conn, Provider.MOJANG, UUID.randomUUID());
+        AndlineProviderSessions.registerEncryptedHash(conn, hash);
+        AndlineProviderSessions.clearConnection(conn);
+        assertFalse(AndlineProviderSessions.consume(hash, "CloseBeforeJoined").isPresent(),
+                "A disconnected player must never leave a usable Mojang reservation");
+    }
+
+    @Test
+    public void oneDisconnectedPlayerCannotRevokeAnotherPlayersVerification() {
+        String hash = "bf881ac3";
+        FakePendingConnection first = new FakePendingConnection("FirstPlayer");
+        FakePendingConnection second = new FakePendingConnection("OtherPlayer");
+        AndlineProviderSessions.markConnection(first, Provider.GML, UUID.randomUUID());
+        AndlineProviderSessions.markConnection(second, Provider.MOJANG, UUID.randomUUID());
+        AndlineProviderSessions.registerEncryptedHash(first, hash);
+        AndlineProviderSessions.registerEncryptedHash(second, hash);
+        AndlineProviderSessions.clearConnection(first);
+        assertFalse(AndlineProviderSessions.consume(hash, "FirstPlayer").isPresent());
+        assertEquals(Provider.MOJANG,
+                AndlineProviderSessions.consume(hash, "OtherPlayer").orElseThrow().provider());
+    }
+
+    @Test
+    public void aPendingConnectionCannotRegisterMultipleEncryptedProviders() {
+        FakePendingConnection conn = new FakePendingConnection("NoSwitch");
+        String first = "012345abcde";
+        AndlineProviderSessions.markConnection(conn, Provider.GML, UUID.randomUUID());
+        AndlineProviderSessions.registerEncryptedHash(conn, first);
+        assertThrows(IllegalStateException.class,
+                () -> AndlineProviderSessions.markConnection(conn, Provider.MOJANG, UUID.randomUUID()));
+        AndlineProviderSessions.registerEncryptedHash(conn, "012345abcdef");
+        assertFalse(AndlineProviderSessions.consume("012345abcdef", "NoSwitch").isPresent());
+        assertEquals(Provider.GML,
+                AndlineProviderSessions.consume(first, "NoSwitch").orElseThrow().provider());
+        AndlineProviderSessions.clearConnection(conn);
+    }
+
+    @Test
     public void cannotFlipPinnedGmlToMojangBeforeEncryption() {
         FakePendingConnection conn = new FakePendingConnection("Steve");
         UUID owner = UUID.randomUUID();
